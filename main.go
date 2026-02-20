@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
+	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/repository"
 )
@@ -17,33 +17,37 @@ import (
 func main() {
 	repoArg := ""
 	prNumber := 0
+	dryRun := false
 
 	flag.StringVar(&repoArg, "repo", "", "Select another repository using the [HOST/]OWNER/REPO format")
 	flag.StringVar(&repoArg, "R", "", "Select another repository using the [HOST/]OWNER/REPO format")
 	flag.IntVar(&prNumber, "pr", 0, "Pull request number")
+	flag.BoolVar(&dryRun, "dry-run", false, "Print suggestion comments to stdout instead of posting to GitHub")
+	flag.BoolVar(&dryRun, "d", false, "Print suggestion comments to stdout instead of posting to GitHub")
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage:
-  gh suggest [--pr PR_NUM] [-R|--repo [HOST/]OWNER/REPO] [PATCH_FILE]
+  gh suggest [--pr PR_NUM] [-R|--repo [HOST/]OWNER/REPO] [--dry-run] [PATCH_FILE]
 
 Summary:
   Convert a git diff patch into a single GitHub PR review suggestion comment.
 
 Arguments:
-  PATCH_FILE  Path to a unified diff file. Use "-" or omit to read from stdin.
+  PATCH_FILE  Path to a unified diff file. Use "-" to read from stdin.
 
 Required:
   --pr PR_NUM  Pull request number.
 
 Options:
   -R, --repo [HOST/]OWNER/REPO  Select another repository.
+  -d, --dry-run                Print suggestion comments to stdout instead of posting to GitHub.
 
 Notes:
-  - The patch must contain exactly one hunk.
-  - The suggestion is posted as a single review comment.
+  - The patch may contain multiple hunks; each hunk becomes one suggestion comment.
+  - All comments are posted in a single review.
 
 Examples:
   gh suggest --pr 123 /path/to/patch.diff
-  git diff | gh suggest --pr 123
+  git diff | gh suggest --pr 123 -
   git diff | gh suggest --pr 123 -R owner/repo
 `)
 	}
@@ -54,13 +58,10 @@ Examples:
 	}
 
 	args := flag.Args()
-	if len(args) > 1 {
-		fatalf("too many arguments: expected a patch file path or stdin")
+	if len(args) != 1 {
+		fatalf("missing required patch file path or '-' for stdin")
 	}
-	patchPath := ""
-	if len(args) == 1 {
-		patchPath = args[0]
-	}
+	patchPath := args[0]
 
 	repo, err := resolveRepo(repoArg)
 	if err != nil {
@@ -95,6 +96,11 @@ Examples:
 	if err != nil {
 		fatalf("build comments: %v", err)
 	}
+	if dryRun {
+		fmt.Print(formatCommentsMarkdown(hunks))
+		return
+	}
+
 	if err := createReviewWithComments(client, repo, prNumber, prInfo.HeadSHA, comments); err != nil {
 		fatalf("create review: %v", err)
 	}
@@ -102,14 +108,15 @@ Examples:
 	fmt.Printf("created review suggestion on %s#%d\n", repoFullName(repo), prNumber)
 }
 
-// For more examples of using go-gh, see:
-// https://github.com/cli/go-gh/blob/trunk/example_gh_test.go
-
 type patchHunk struct {
 	Path     string
 	NewStart int
 	NewCount int
 	NewLines []string
+}
+
+func (h patchHunk) String() string {
+	return fmt.Sprintf("path=%s\nnew_start=%d\nnew_count=%d\nnew_lines=\n```\n%s\n```", h.Path, h.NewStart, h.NewCount, strings.Join(h.NewLines, "\n"))
 }
 
 func resolveRepo(repoArg string) (repository.Repository, error) {
@@ -120,63 +127,34 @@ func resolveRepo(repoArg string) (repository.Repository, error) {
 }
 
 func parsePatchHunks(input string) ([]patchHunk, error) {
-	var (
-		currentPath string
-		hunks       []patchHunk
-	)
+	files, _, err := gitdiff.Parse(strings.NewReader(input))
+	if err != nil {
+		return nil, err
+	}
 
-	lines := strings.Split(input, "\n")
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		if strings.HasPrefix(line, "diff --git ") {
-			path, err := parseDiffPath(line)
-			if err != nil {
-				return nil, err
-			}
-			currentPath = path
+	hunks := []patchHunk{}
+	for _, file := range files {
+		if file.IsBinary || file.IsDelete || file.NewName == "" || file.NewName == "/dev/null" {
 			continue
 		}
 
-		if strings.HasPrefix(line, "@@ ") {
-			if currentPath == "" {
-				return nil, errors.New("hunk without file header")
-			}
-			newStart, newCount, err := parseHunkHeader(line)
-			if err != nil {
-				return nil, err
-			}
-
-			hunkLines := []string{}
-			for j := i + 1; j < len(lines); j++ {
-				next := lines[j]
-				if strings.HasPrefix(next, "diff --git ") || strings.HasPrefix(next, "@@ ") {
-					i = j - 1
-					break
-				}
-				if strings.HasPrefix(next, "\\ No newline at end of file") {
+		path := strings.TrimPrefix(file.NewName, "b/")
+		for _, frag := range file.TextFragments {
+			newLines := make([]string, 0, int(frag.NewLines))
+			for _, line := range frag.Lines {
+				if line.NoEOL() {
 					continue
 				}
-				if len(next) == 0 {
-					hunkLines = append(hunkLines, "")
-					continue
-				}
-				prefix := next[0]
-				if prefix != ' ' && prefix != '+' && prefix != '-' {
-					continue
-				}
-				if prefix == ' ' || prefix == '+' {
-					hunkLines = append(hunkLines, next[1:])
-				}
-				if j == len(lines)-1 {
-					i = j
+				if line.New() {
+					newLines = append(newLines, line.Line)
 				}
 			}
 
 			hunks = append(hunks, patchHunk{
-				Path:     currentPath,
-				NewStart: newStart,
-				NewCount: newCount,
-				NewLines: hunkLines,
+				Path:     path,
+				NewStart: int(frag.NewPosition),
+				NewCount: int(frag.NewLines),
+				NewLines: newLines,
 			})
 		}
 	}
@@ -186,41 +164,6 @@ func parsePatchHunks(input string) ([]patchHunk, error) {
 	}
 
 	return hunks, nil
-}
-
-func parseDiffPath(line string) (string, error) {
-	// Format: diff --git a/path b/path
-	parts := strings.Split(line, " b/")
-	if len(parts) != 2 {
-		return "", fmt.Errorf("unexpected diff header: %q", line)
-	}
-	return strings.TrimSpace(parts[1]), nil
-}
-
-func parseHunkHeader(line string) (int, int, error) {
-	// Format: @@ -oldStart,oldCount +newStart,newCount @@
-	fields := strings.Fields(line)
-	if len(fields) < 3 {
-		return 0, 0, fmt.Errorf("unexpected hunk header: %q", line)
-	}
-	newRange := fields[2]
-	if !strings.HasPrefix(newRange, "+") {
-		return 0, 0, fmt.Errorf("unexpected hunk header: %q", line)
-	}
-	newRange = strings.TrimPrefix(newRange, "+")
-	parts := strings.SplitN(newRange, ",", 2)
-	start, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid hunk start: %q", line)
-	}
-	count := 1
-	if len(parts) == 2 {
-		count, err = strconv.Atoi(parts[1])
-		if err != nil {
-			return 0, 0, fmt.Errorf("invalid hunk count: %q", line)
-		}
-	}
-	return start, count, nil
 }
 
 type pullInfo struct {
@@ -304,20 +247,34 @@ func fatalf(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
+func formatCommentsMarkdown(hunks []patchHunk) string {
+	var b strings.Builder
+	for i, hunk := range hunks {
+		if len(hunk.NewLines) == 0 {
+			continue
+		}
+		start := hunk.NewStart
+		end := hunk.NewStart + len(hunk.NewLines) - 1
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if start == end {
+			fmt.Fprintf(&b, "### `%s:%d`\n\n", hunk.Path, start)
+		} else {
+			fmt.Fprintf(&b, "### `%s:%d-%d`\n\n", hunk.Path, start, end)
+		}
+		b.WriteString(buildSuggestionBody(hunk.NewLines))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func readPatchInput(path string) ([]byte, error) {
 	if path == "-" {
 		return io.ReadAll(os.Stdin)
 	}
-	if path != "" {
-		return os.ReadFile(path)
+	if path == "" {
+		return nil, errors.New("missing required patch file path or '-' for stdin")
 	}
-
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if (info.Mode() & os.ModeCharDevice) != 0 {
-		return nil, errors.New("missing required patch file path or stdin input")
-	}
-	return io.ReadAll(os.Stdin)
+	return os.ReadFile(path)
 }

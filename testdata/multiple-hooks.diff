@@ -1,0 +1,41 @@
+diff --git a/main.go b/main.go
+index 1434515..fa52cbc 100644
+--- a/main.go
++++ b/main.go
+@@ -38,8 +38,8 @@ Options:
+   -R, --repo [HOST/]OWNER/REPO  Select another repository.
+ 
+ Notes:
+-  - The patch must contain exactly one hunk.
+-  - The suggestion is posted as a single review comment.
++  - The patch may contain multiple hunks; each hunk becomes one suggestion comment.
++  - All comments are posted in a single review.
+ 
+ Examples:
+   gh suggest --pr 123 /path/to/patch.diff
+@@ -102,9 +102,6 @@ Examples:
+ 	fmt.Printf("created review suggestion on %s#%d\n", repoFullName(repo), prNumber)
+ }
+ 
+-// For more examples of using go-gh, see:
+-// https://github.com/cli/go-gh/blob/trunk/example_gh_test.go
+-
+ type patchHunk struct {
+ 	Path     string
+ 	NewStart int
+@@ -119,6 +116,7 @@ func resolveRepo(repoArg string) (repository.Repository, error) {
+ 	return repository.Current()
+ }
+ 
++// add comments
+ func parsePatchHunks(input string) ([]patchHunk, error) {
+ 	var (
+ 		currentPath string
+@@ -157,7 +155,6 @@ func parsePatchHunks(input string) ([]patchHunk, error) {
+ 					continue
+ 				}
+ 				if len(next) == 0 {
+-					hunkLines = append(hunkLines, "")
+ 					continue
+ 				}
+ 				prefix := next[0]

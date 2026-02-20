@@ -1,0 +1,15 @@
+diff --git a/main.go b/main.go
+index 1434515..be3b479 100644
+--- a/main.go
++++ b/main.go
+@@ -38,8 +38,8 @@ Options:
+   -R, --repo [HOST/]OWNER/REPO  Select another repository.
+ 
+ Notes:
+-  - The patch must contain exactly one hunk.
+-  - The suggestion is posted as a single review comment.
++  - The patch may contain multiple hunks; each hunk becomes one suggestion comment.
++  - All comments are posted in a single review.
+ 
+ Examples:
+   gh suggest --pr 123 /path/to/patch.diff
