@@ -1,0 +1,54 @@
+diff --git a/main.go b/main.go
+index 88b6beb..afe1f00 100644
+--- a/main.go
++++ b/main.go
+@@ -56,4 +55,0 @@ Examples:
+-	if prNumber <= 0 {
+-		fatalf("missing required --pr PR_NUM")
+-	}
+-
+@@ -84,0 +81,18 @@ Examples:
++	comments, err := buildReviewComments(hunks)
++	if err != nil {
++		fatalf("build comments: %v", err)
++	}
++	if dryRun {
++		if prNumber <= 0 {
++			fmt.Print(formatCommentsMarkdown(hunks))
++			return
++		}
++		fmt.Printf("would create review suggestion on %s\n\n", prURL(repo, prNumber))
++		fmt.Print(formatCommentsMarkdown(hunks))
++		return
++	}
++
++	if prNumber <= 0 {
++		fatalf("missing required --pr PR_NUM")
++	}
++
+@@ -95,9 +108,0 @@ Examples:
+-	comments, err := buildReviewComments(hunks)
+-	if err != nil {
+-		fatalf("build comments: %v", err)
+-	}
+-	if dryRun {
+-		fmt.Print(formatCommentsMarkdown(hunks))
+-		return
+-	}
+-
+@@ -190 +195 @@ func buildSuggestionBody(lines []string) string {
+-	return "```suggestion\n" + strings.Join(lines, "\n") + "\n```"
++	return "```suggestion" + strings.Join(lines, "\n") + "\n```"
+@@ -219,0 +225,3 @@ func buildReviewComments(hunks []patchHunk) ([]map[string]interface{}, error) {
++		if hunk.NewCount == 0 {
++			hunk.NewCount = len(hunk.NewLines)
++		}
+@@ -244,0 +253,8 @@ func repoFullName(repo repository.Repository) string {
++func prURL(repo repository.Repository, prNumber int) string {
++	host := repo.Host
++	if host == "" {
++		host = "github.com"
++	}
++	return fmt.Sprintf("https://%s/%s/%s/pull/%d", host, repo.Owner, repo.Name, prNumber)
++}
++

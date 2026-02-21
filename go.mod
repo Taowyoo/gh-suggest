@@ -2,7 +2,10 @@ module github.com/Taowyoo/gh-suggest
 
 go 1.25.0
 
-require github.com/cli/go-gh/v2 v2.13.0
+require (
+	github.com/bluekeyes/go-gitdiff v0.8.1
+	github.com/cli/go-gh/v2 v2.13.0
+)
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
