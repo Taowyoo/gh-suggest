@@ -23,6 +23,9 @@ func TestParsePatchHunksSingle(t *testing.T) {
 	if hunk.Path != "main.go" {
 		t.Fatalf("expected path main.go, got %q", hunk.Path)
 	}
+	if hunk.Side != "RIGHT" {
+		t.Fatalf("expected side RIGHT, got %q", hunk.Side)
+	}
 	if hunk.NewStart != 38 {
 		t.Fatalf("expected NewStart 38, got %d", hunk.NewStart)
 	}
@@ -85,13 +88,59 @@ func TestParsePatchHunksMultiple(t *testing.T) {
 	if hunks[0].Path != "main.go" || hunks[0].NewStart != 38 {
 		t.Fatalf("unexpected first hunk:\n%s", hunks[0])
 	}
-	if hunks[1].Path != "main.go" || hunks[1].NewStart != 102 {
+	if hunks[0].Side != "RIGHT" {
+		t.Fatalf("unexpected first hunk side:\n%s", hunks[0])
+	}
+	if hunks[1].Path != "main.go" || hunks[1].OldStart != 102 {
 		t.Fatalf("unexpected second hunk:\n%s", hunks[1])
+	}
+	if hunks[1].Side != "LEFT" {
+		t.Fatalf("unexpected second hunk side:\n%s", hunks[1])
 	}
 	if hunks[2].Path != "main.go" || hunks[2].NewStart != 116 {
 		t.Fatalf("unexpected third hunk:\n%s", hunks[2])
 	}
-	if hunks[3].Path != "main.go" || hunks[3].NewStart != 155 {
+	if hunks[2].Side != "RIGHT" {
+		t.Fatalf("unexpected third hunk side:\n%s", hunks[2])
+	}
+	if hunks[3].Path != "main.go" || hunks[3].OldStart != 155 {
 		t.Fatalf("unexpected fourth hunk:\n%s", hunks[3])
+	}
+	if hunks[3].Side != "LEFT" {
+		t.Fatalf("unexpected fourth hunk side:\n%s", hunks[3])
+	}
+}
+
+func TestParsePatchHunksUnifiedZero(t *testing.T) {
+	data, err := os.ReadFile("testdata/multiple-hooks-2.diff")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	hunks, err := parsePatchHunks(string(data))
+	if err != nil {
+		t.Fatalf("parsePatchHunks: %v", err)
+	}
+	if len(hunks) != 6 {
+		t.Fatalf("expected 6 hunks, got %d", len(hunks))
+	}
+
+	if hunks[0].Side != "LEFT" || hunks[0].OldStart != 56 {
+		t.Fatalf("unexpected first hunk:\n%s", hunks[0])
+	}
+	if hunks[1].Side != "RIGHT" || hunks[1].NewStart != 81 {
+		t.Fatalf("unexpected second hunk:\n%s", hunks[1])
+	}
+	if hunks[2].Side != "LEFT" || hunks[2].OldStart != 95 {
+		t.Fatalf("unexpected third hunk:\n%s", hunks[2])
+	}
+	if hunks[3].Side != "RIGHT" || hunks[3].NewStart != 195 {
+		t.Fatalf("unexpected fourth hunk:\n%s", hunks[3])
+	}
+	if hunks[4].Side != "RIGHT" || hunks[4].NewStart != 225 {
+		t.Fatalf("unexpected fifth hunk:\n%s", hunks[4])
+	}
+	if hunks[5].Side != "RIGHT" || hunks[5].NewStart != 253 {
+		t.Fatalf("unexpected sixth hunk:\n%s", hunks[5])
 	}
 }

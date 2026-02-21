@@ -53,10 +53,6 @@ Examples:
 	}
 	flag.Parse()
 
-	if prNumber <= 0 {
-		fatalf("missing required --pr PR_NUM")
-	}
-
 	args := flag.Args()
 	if len(args) != 1 {
 		fatalf("missing required patch file path or '-' for stdin")
@@ -82,6 +78,24 @@ Examples:
 		fatalf("patch has no hunks")
 	}
 
+	comments, err := buildReviewComments(hunks)
+	if err != nil {
+		fatalf("build comments: %v", err)
+	}
+	if dryRun {
+		if prNumber <= 0 {
+			fmt.Print(formatCommentsMarkdown(hunks))
+			return
+		}
+		fmt.Printf("would create review suggestion on %s\n\n", prURL(repo, prNumber))
+		fmt.Print(formatCommentsMarkdown(hunks))
+		return
+	}
+
+	if prNumber <= 0 {
+		fatalf("missing required --pr PR_NUM")
+	}
+
 	client, err := api.NewRESTClient(api.ClientOptions{Host: repo.Host})
 	if err != nil {
 		fatalf("api client: %v", err)
@@ -90,15 +104,6 @@ Examples:
 	prInfo, err := fetchPullRequest(client, repo, prNumber)
 	if err != nil {
 		fatalf("fetch PR: %v", err)
-	}
-
-	comments, err := buildReviewComments(hunks)
-	if err != nil {
-		fatalf("build comments: %v", err)
-	}
-	if dryRun {
-		fmt.Print(formatCommentsMarkdown(hunks))
-		return
 	}
 
 	if err := createReviewWithComments(client, repo, prNumber, prInfo.HeadSHA, comments); err != nil {
@@ -110,13 +115,27 @@ Examples:
 
 type patchHunk struct {
 	Path     string
+	Side     string
 	NewStart int
 	NewCount int
+	OldStart int
+	OldCount int
 	NewLines []string
 }
 
 func (h patchHunk) String() string {
-	return fmt.Sprintf("path=%s\nnew_start=%d\nnew_count=%d\nnew_lines=\n```\n%s\n```", h.Path, h.NewStart, h.NewCount, strings.Join(h.NewLines, "\n"))
+	var b strings.Builder
+	fmt.Fprintf(&b, "diff --git a/%s b/%s\n", h.Path, h.Path)
+	fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", h.OldStart, h.OldCount, h.NewStart, h.NewCount)
+	if h.Side == "RIGHT" {
+		for _, line := range h.NewLines {
+			b.WriteString("+")
+			b.WriteString(line)
+		}
+	} else {
+		// Deletion-only hunks have no new lines captured in NewLines.
+	}
+	return b.String()
 }
 
 func resolveRepo(repoArg string) (repository.Repository, error) {
@@ -149,11 +168,29 @@ func parsePatchHunks(input string) ([]patchHunk, error) {
 					newLines = append(newLines, line.Line)
 				}
 			}
+			if frag.NewLines == 0 && frag.OldLines > 0 {
+				hunks = append(hunks, patchHunk{
+					Path:     path,
+					Side:     "LEFT",
+					OldStart: int(frag.OldPosition),
+					OldCount: int(frag.OldLines),
+					NewStart: int(frag.NewPosition),
+					NewCount: int(frag.NewLines),
+					NewLines: nil,
+				})
+				continue
+			}
+			if len(newLines) == 0 {
+				continue
+			}
 
 			hunks = append(hunks, patchHunk{
 				Path:     path,
+				Side:     "RIGHT",
 				NewStart: int(frag.NewPosition),
 				NewCount: int(frag.NewLines),
+				OldStart: int(frag.OldPosition),
+				OldCount: int(frag.OldLines),
 				NewLines: newLines,
 			})
 		}
@@ -187,7 +224,10 @@ func fetchPullRequest(client *api.RESTClient, repo repository.Repository, prNumb
 }
 
 func buildSuggestionBody(lines []string) string {
-	return "```suggestion\n" + strings.Join(lines, "\n") + "\n```"
+	if len(lines) == 0 {
+		return "```suggestion\n```"
+	}
+	return "```suggestion\n" + strings.Join(lines, "") + "```"
 }
 
 func createReviewWithComments(client *api.RESTClient, repo repository.Repository, prNumber int, headSHA string, comments []map[string]interface{}) error {
@@ -214,21 +254,42 @@ func createReviewWithComments(client *api.RESTClient, repo repository.Repository
 func buildReviewComments(hunks []patchHunk) ([]map[string]interface{}, error) {
 	comments := make([]map[string]interface{}, 0, len(hunks))
 	for _, hunk := range hunks {
-		if len(hunk.NewLines) == 0 {
-			return nil, fmt.Errorf("hunk for %s has no added/modified lines; cannot create a suggestion", hunk.Path)
-		}
-
-		endLine := hunk.NewStart + len(hunk.NewLines) - 1
 		body := buildSuggestionBody(hunk.NewLines)
-		comment := map[string]interface{}{
-			"path": hunk.Path,
-			"side": "RIGHT",
-			"line": endLine,
-			"body": body,
-		}
-		if len(hunk.NewLines) > 1 {
-			comment["start_side"] = "RIGHT"
-			comment["start_line"] = hunk.NewStart
+		var comment map[string]interface{}
+		switch hunk.Side {
+		case "LEFT":
+			if hunk.OldCount == 0 {
+				return nil, fmt.Errorf("hunk for %s has no deleted lines; cannot create a suggestion", hunk.Path)
+			}
+			endLine := hunk.OldStart + hunk.OldCount - 1
+			comment = map[string]interface{}{
+				"path": hunk.Path,
+				"side": "LEFT",
+				"line": endLine,
+				"body": body,
+			}
+			if hunk.OldCount > 1 {
+				comment["start_side"] = "LEFT"
+				comment["start_line"] = hunk.OldStart
+			}
+		default:
+			if len(hunk.NewLines) == 0 {
+				return nil, fmt.Errorf("hunk for %s has no added/modified lines; cannot create a suggestion", hunk.Path)
+			}
+			if hunk.NewCount == 0 {
+				hunk.NewCount = len(hunk.NewLines)
+			}
+			endLine := hunk.NewStart + hunk.NewCount - 1
+			comment = map[string]interface{}{
+				"path": hunk.Path,
+				"side": "RIGHT",
+				"line": endLine,
+				"body": body,
+			}
+			if hunk.NewCount > 1 {
+				comment["start_side"] = "RIGHT"
+				comment["start_line"] = hunk.NewStart
+			}
 		}
 		comments = append(comments, comment)
 	}
@@ -242,6 +303,14 @@ func repoFullName(repo repository.Repository) string {
 	return fmt.Sprintf("%s/%s", repo.Owner, repo.Name)
 }
 
+func prURL(repo repository.Repository, prNumber int) string {
+	host := repo.Host
+	if host == "" {
+		host = "github.com"
+	}
+	return fmt.Sprintf("https://%s/%s/%s/pull/%d", host, repo.Owner, repo.Name, prNumber)
+}
+
 func fatalf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
@@ -250,18 +319,25 @@ func fatalf(format string, args ...interface{}) {
 func formatCommentsMarkdown(hunks []patchHunk) string {
 	var b strings.Builder
 	for i, hunk := range hunks {
-		if len(hunk.NewLines) == 0 {
+		if hunk.Side == "LEFT" && hunk.OldCount == 0 {
+			continue
+		}
+		if hunk.Side != "LEFT" && len(hunk.NewLines) == 0 {
 			continue
 		}
 		start := hunk.NewStart
 		end := hunk.NewStart + len(hunk.NewLines) - 1
+		if hunk.Side == "LEFT" {
+			start = hunk.OldStart
+			end = hunk.OldStart + hunk.OldCount - 1
+		}
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		if start == end {
-			fmt.Fprintf(&b, "### `%s:%d`\n\n", hunk.Path, start)
+			fmt.Fprintf(&b, "### `%s:%d`\n", hunk.Path, start)
 		} else {
-			fmt.Fprintf(&b, "### `%s:%d-%d`\n\n", hunk.Path, start, end)
+			fmt.Fprintf(&b, "### `%s:%d-%d`\n", hunk.Path, start, end)
 		}
 		b.WriteString(buildSuggestionBody(hunk.NewLines))
 		b.WriteString("\n")
