@@ -44,11 +44,12 @@ Options:
 Notes:
   - The patch may contain multiple hunks; each hunk becomes one suggestion comment.
   - All comments are posted in a single review.
+  - To minimize suggestion size in GitHub PRs, generate the patch with "git diff -U0".
 
 Examples:
   gh suggest --pr 123 /path/to/patch.diff
-  git diff | gh suggest --pr 123 -
-  git diff | gh suggest --pr 123 -R owner/repo
+  git diff -U0 | gh suggest --pr 123 -
+  git diff -U0 | gh suggest --pr 123 -R owner/repo -
 `)
 	}
 	flag.Parse()
