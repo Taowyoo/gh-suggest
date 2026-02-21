@@ -84,12 +84,13 @@ Examples:
 		fatalf("build comments: %v", err)
 	}
 	if dryRun {
+		commentsMarkdown := formatCommentsMarkdown(hunks)
 		if prNumber <= 0 {
-			fmt.Print(formatCommentsMarkdown(hunks))
+			fmt.Print(commentsMarkdown)
 			return
 		}
 		fmt.Printf("would create review suggestion on %s\n\n", prURL(repo, prNumber))
-		fmt.Print(formatCommentsMarkdown(hunks))
+		fmt.Print(commentsMarkdown)
 		return
 	}
 
@@ -239,7 +240,7 @@ func createReviewWithComments(client *api.RESTClient, repo repository.Repository
 	payload := map[string]interface{}{
 		"commit_id": headSHA,
 		"body":      "Suggestions from gh-suggest.",
-		"event":     "COMMENT",
+		"event":     "",
 		"comments":  comments,
 	}
 
