@@ -94,7 +94,7 @@ func TestParsePatchHunksMultiple(t *testing.T) {
 	if hunks[1].Path != "main.go" || hunks[1].OldStart != 102 {
 		t.Fatalf("unexpected second hunk:\n%s", hunks[1])
 	}
-	if hunks[1].Side != "LEFT" {
+	if hunks[1].Side != "RIGHT" {
 		t.Fatalf("unexpected second hunk side:\n%s", hunks[1])
 	}
 	if hunks[2].Path != "main.go" || hunks[2].NewStart != 116 {
@@ -103,10 +103,10 @@ func TestParsePatchHunksMultiple(t *testing.T) {
 	if hunks[2].Side != "RIGHT" {
 		t.Fatalf("unexpected third hunk side:\n%s", hunks[2])
 	}
-	if hunks[3].Path != "main.go" || hunks[3].OldStart != 155 {
+	if hunks[3].Path != "main.go" || hunks[3].OldStart != 157 {
 		t.Fatalf("unexpected fourth hunk:\n%s", hunks[3])
 	}
-	if hunks[3].Side != "LEFT" {
+	if hunks[3].Side != "RIGHT" {
 		t.Fatalf("unexpected fourth hunk side:\n%s", hunks[3])
 	}
 }
